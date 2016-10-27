@@ -18,6 +18,9 @@
 (def httpkit-dep
   '[http-kit "2.1.19"])
 
+(def immutant-dep
+  '[org.immutant/immutant "2.1.5"])
+
 (def nrepl-dep
   '[org.clojure/tools.nrepl "0.2.11"])
 
@@ -28,20 +31,25 @@
   "Start a web server on localhost, serving resources and optionally a directory.
   Listens on port 3000 by default."
 
-  [d dir           PATH str  "The directory to serve; created if doesn't exist."
-   H handler       SYM  sym  "The ring handler to serve."
-   i init          SYM  sym  "A function to run prior to starting the server."
-   c cleanup       SYM  sym  "A function to run after the server stops."
-   r resource-root ROOT str  "The root prefix when serving resources from classpath"
-   p port          PORT int  "The port to listen on. (Default: 3000)"
-   k httpkit            bool "Use Http-kit server instead of Jetty"
-   s silent             bool "Silent-mode (don't output anything)"
-   R reload             bool "Reload modified namespaces on each request."
-   n nrepl         REPL edn  "nREPL server parameters e.g. \"{:port 3001, :bind \"0.0.0.0\"}\""
-   N not-found     SYM  sym "a ring handler for requested resources that aren't in your directory. Useful for pushState."]
+  [d dir           PATH   str  "The directory to serve; created if doesn't exist."
+   H handler       SYM    sym  "The ring handler to serve."
+   i init          SYM    sym  "A function to run prior to starting the server."
+   c cleanup       SYM    sym  "A function to run after the server stops."
+   r resource-root ROOT   str  "The root prefix when serving resources from classpath"
+   p port          PORT   int  "The port to listen on. (Default: 3000)"
+   k httpkit              bool "Use Http-kit server instead of Jetty. (DEPRECATED: see server)"
+   s silent               bool "Silent-mode (don't output anything)"
+   R reload               bool "Reload modified namespaces on each request."
+   S server        SERVER kw   "Run server using \"jetty\" (default), \"httpkit\", or \"immutant\"."
+   n nrepl         REPL   edn  "nREPL server parameters e.g. \"{:port 3001, :bind \"0.0.0.0\"}\""
+   N not-found     SYM    sym  "a ring handler for requested resources that aren't in your directory. Useful for pushState."]
 
   (let [port        (or port default-port)
-        server-dep  (if httpkit httpkit-dep jetty-dep)
+        server-type (or server (if httpkit :httpkit :jetty))
+        server-dep  (case server-type
+                      :httpkit httpkit-dep
+                      :immutant immutant-dep
+                      :jetty jetty-dep)
         deps        (cond-> serve-deps
                       true        (conj server-dep)
                       (seq nrepl) (conj nrepl-dep))
@@ -54,10 +62,10 @@
                                 '[boot.util :as boot])
                        (when '~init
                          (u/resolve-and-invoke '~init))
-                       (def server
+                       (def http-server
                          (http/server
                           {:dir ~dir, :port ~port, :handler '~handler,
-                           :reload '~reload, :env-dirs ~(vec (:directories pod/env)), :httpkit ~httpkit,
+                           :reload '~reload, :env-dirs ~(vec (:directories pod/env)), :server ~server-type,
                            :not-found '~not-found,
                            :resource-root ~resource-root}))
                        (def nrepl-server
@@ -65,9 +73,9 @@
                            (http/nrepl-server {:nrepl ~nrepl})))
                        (when-not ~silent
                          (boot/info "Started %s on http://localhost:%d\n"
-                               (:human-name server)
-                               (:local-port server)))))]
-    (when (and silent (not httpkit))
+                               (:human-name http-server)
+                               (:local-port http-server)))))]
+    (when (and silent (= server-type :jetty))
       (silence-jetty!))
     (core/cleanup
      (pod/with-eval-in worker
@@ -75,12 +83,12 @@
          (when-not silent
            (util/info "Stopping boot-http nREPL server"))
          (.stop nrepl-server))
-       (when server
+       (when http-server
          (when-not silent
-           (util/info "Stopping %s\n" (:human-name server)))
-         ((:stop-server server)))
+           (util/info "Stopping %s\n" (:human-name http-server)))
+         ((:stop-server http-server)))
        (when '~cleanup
          (u/resolve-and-invoke '~cleanup))))
     (core/with-pre-wrap fileset
       @start
-      (assoc fileset :http-port (pod/with-eval-in worker (:local-port server))))))
+      (assoc fileset :http-port (pod/with-eval-in worker (:local-port http-server))))))

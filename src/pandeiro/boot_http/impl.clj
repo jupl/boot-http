@@ -101,7 +101,7 @@
       (resources-handler opts)))
 
 ;;
-;; Jetty / HTTP Kit
+;; Jetty / HTTP Kit / Immutant
 ;;
 
 (defn- start-httpkit [handler opts]
@@ -111,6 +111,15 @@
            {:stop-server stop-server
             :human-name "HTTP Kit"})))
 
+(defn- start-immutant [handler opts]
+  (require 'immutant.web)
+  (let [server ((resolve 'immutant.web/run) handler (dissoc opts :join?))
+        stop-server (resolve 'immutant.web/stop)]
+    {:server server
+     :human-name "Immutant"
+     :local-port (:port server)
+     :stop-server #(stop-server server)}))
+
 (defn- start-jetty [handler opts]
   (require 'ring.adapter.jetty)
   (let [server ((resolve 'ring.adapter.jetty/run-jetty) handler opts)]
@@ -119,8 +128,11 @@
      :local-port (-> server .getConnectors first .getLocalPort)
      :stop-server #(.stop server)}))
 
-(defn server [{:keys [port httpkit] :as opts}]
-  ((if httpkit start-httpkit start-jetty)
+(defn server [{:keys [port server] :as opts}]
+  ((case server
+     :httpkit start-httpkit
+     :immutant start-immutant
+     :jetty start-jetty)
    (-> (ring-handler opts)
        wrap-content-type
        wrap-not-modified)
